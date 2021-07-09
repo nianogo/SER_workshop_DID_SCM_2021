@@ -1,0 +1,299 @@
+---
+title: "An introduction to Difference-in-difference and Synthetic control methods for Epidemiologists"
+subtitle: "Society for Epidemiologic Research (SER) Workshop: Part 2/3"
+author: "Roch Nianogo (niaroch@ucla.edu) & Tarik Benmarhnia (tbenmarhnia@health.ucsd.edu)"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: kable
+    mathjax: default
+    number_sections: yes
+    theme: lumen
+    highlight: tango
+    toc: yes
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(
+	message = T,
+	warning = T,
+	#include = FALSE,
+	echo = TRUE
+)
+if (!require("pacman")){
+  install.packages("pacman", repos = 'http://cran.us.r-project.org')
+} # a nice package to load several packages simultaneously
+
+
+p_load("tidyverse","magrittr","broom",        #manipulate data
+       "mise",                                #directory managment
+       "here",                                #mise en place
+       "Synth", "gsynth",                     #synthetic control
+       "panelView", "lme4", "estimatr",       #multi-level model
+       "ggdag",                               #draw a Directed Acylic Diagram (DAG)
+       "gtsummary")                           #for tables
+
+p_load("flextable",                         # For tidying up regression output
+        "broom.mixed",                      # For tidying up multilevel output
+        "kableExtra",                       # For nice tables
+        "knitr",                            # For nice tables
+        "rmarkdown")   
+
+p_load_gh("datalorax/equatiomatic")         # For nicely presenting regression coefficients
+
+```
+
+# Loading the data  
+
+```{r load_data}
+#First load the data
+mydata <- read_csv(here("data", "raw_data", "sim_data.csv"))
+year_policy <- 2000
+
+mydata <- mydata %>% 
+  mutate(year_rec = year - year_policy,
+         post     = ifelse(year>=year_policy,1,0),
+         treated  = ifelse(state %in% c("Alabama",  "Alaska", 
+                                        "Arizona", "Arkansas", "California"), 1,0),
+         treatedpost = treated*post)
+```
+
+
+# Pre-post designs 
+
+Pre-post analysis (before-after) no control group: One state, two time points  
+- Subset the data to California and the years 1995 and 2005  
+- Preview the data  
+- Plot the data  
+- Fit a linear model to estimate the effect of the policy on the outcome y  
+- What are potential problems  
+
+```{r prepost}
+##Create the data
+dt <- mydata %>%
+  filter(state=="California",
+         year %in% c(1995, 2005)) 
+
+
+##Preview the data
+head(dt)
+
+
+##Plot the data
+dt %>% 
+  ggplot(aes(x=year, y=y, group=state, color = state)) + 
+  labs(title = paste("Outcome by year"),
+       x = "Year", 
+       y = "Outcome",
+       colour = "Treatment") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = year_policy, lty=2) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+The following model is used to estimate the effect of the policy on the outcome y
+```{r echo=FALSE, error=TRUE, message=TRUE, warning=TRUE}
+##fit a linear model using the post as the exposure of interest
+fit <- lm(y ~ post + xi + xt + xit, data=dt)
+
+extract_eq(fit, use_coefs = F)
+
+fit %>% 
+  tidy() %>% flextable()
+```
+
+**Potential problems**  
+- The years before and after the policy have been implemented are picked arbitrarily  
+- It is impossible to get standard errors  
+- It is impossible to adjust for covariates  
+- This model would be wrong if the parallel trend assumption is violated  
+- This model would be wrong if the common assumption is violated  
+
+**Conclusion**
+- As expected the estimate is biased and standard errors inestimable
+
+
+# Controlled pre-post designs 
+
+Pre-post analysis (before-after) with a control group: Two states, two time points   
+
+- Subset the data to California and Georgia and the years 1995 and 2005  
+- Preview the data  
+- Plot the data  
+- Fit a linear model to estimate the effect of the policy on the outcome y  
+- What are potential problems  
+
+```{r ctrl_prepost}
+
+##Create the data
+dt1 <- mydata %>% 
+  filter(state=="California" | state=="Georgia",
+         year %in% c(1995, 2005))
+
+##Preview the data
+head(dt1)
+
+##Plot the data
+dt1 %>% 
+  ggplot(aes(x=year, y=y, group=state, color = state)) + 
+  labs(title = paste("Outcome by year"),
+       x = "Year", 
+       y = "Outcome",
+       colour = "Treatment") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = year_policy, lty=2) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+The following model is used to estimate the effect of the policy on the outcome y
+```{r echo=FALSE, error=TRUE, message=TRUE, warning=TRUE}
+##fit a linear model using the post as the exposure of interest
+fit <- lm(y ~ treated*post, data=dt) 
+
+extract_eq(fit, use_coefs = F)
+
+fit %>% 
+  tidy() %>% flextable()
+```
+
+
+**Potential problems**
+
+- The years before and after the policy have been implemented are picked arbitrarily  
+- The control units are picked arbitrarily  
+- It is impossible to get standard errors  
+- It is impossible to adjust for covariates  
+- This model would be wrong if the parallel trend assumption is violated  
+- This model would be wrong if the common assumption is violated  
+
+**Conclusion**
+- As expected the estimate is biased and standard errors inestimable  
+
+
+# Interrupted Time Series Design  
+
+Interupted time series: One state, Multiple time points
+
+- Subset the data to California  
+- Preview the data  
+- Plot the data  
+- Fit a linear model to estimate the effect of the policy on the outcome y  
+- What are potential problems  
+
+
+```{r its}
+
+##Create the data
+dt2 <- mydata %>% 
+  filter(state=="California")
+
+##Preview the data
+head(dt2)
+
+##Plot the data
+dt2 %>% 
+  ggplot(aes(x=year, y=y, group=state, color = state)) + 
+  labs(title = paste("Outcome by year"),
+       x = "Year", 
+       y = "Outcome",
+       colour = "Treatment") +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = year_policy, lty=2) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+The following model is used to estimate the effect of the policy on the outcome y
+```{r echo=FALSE, error=TRUE, message=TRUE, warning=TRUE}
+##Fit the model
+fit <- lm(y ~ year_rec + post + post*year_rec + xi + xt + xit, data=dt2) 
+
+extract_eq(fit, use_coefs = F)
+
+fit %>% 
+  tidy() %>% flextable()
+```
+
+**Potential problem (s)**
+
+- This model would be wrong if the common assumption is violated(that is if an event occurs in the treated unit at or after the time of  the policy that is not attributable to the policy)
+
+**Conclusion**
+- As expected the estimate is slightly biased  
+
+
+
+# Controlled Interrupted Time Series (CITS) or Difference-in-Difference Designs  
+
+##  Step 1: Checking the parallel trends assumption    
+
+Check the parallel trends assumptions  
+To do so:  
+- Restrict the data to the period before the policy  
+- Run a linear regression of the outcome on time-varying covariates and on an interaction term between treated indicator and year  
+
+
+```{r ptrends}
+
+p_load("estimatr") #for the lm_robust() function
+pretrend_data <- mydata %>% 
+  filter(post == 0)
+
+res_pretrend <-  lm(y ~ treated*year + xit + xt + xi, 
+                    data = pretrend_data)
+tidy(res_pretrend) %>% flextable()
+
+
+#the lm_robust procedure is best because SE are correctly estimated
+res_pretrend <- lm_robust(y ~ treated*year + xit, data = pretrend_data,
+                          fixed_effects=state,
+                          clusters = state, se_type = "stata")
+tidy(res_pretrend) %>% flextable()
+```
+
+## Step 2: Implementing the DID analysis method  
+
+- Fit a linear model with the treated, post and their interaction
+- Don't forget to add any other time-varying covariates
+- What is the regression coefficient of the interaction term
+
+```{r did}
+
+#Method 1: Lm_robust()
+p_load("estimatr")
+all <- lm_robust(y ~ treated:post + post + xt + xit, 
+                 data = mydata, fixed_effects=state,
+                 clusters = state, se_type = "stata")
+all
+
+
+#Method 2: lmer(): Multilevel
+fit <- lmerTest::lmer(y ~ treated + post + treated:post + xt + xi + xit + (1| state) + (1 | year), 
+                      data = mydata, 
+                      REML = T)
+tidy(fit) %>% flextable()
+
+#Other specifications
+fit2 <-  lm(y ~  xit + xi + xt + factor(state) + factor(year) + treated:post, data = mydata)
+tidy(fit2) %>% flextable()
+
+p_load("lme4", "lmerTest")
+fit3 <-  lmerTest::lmer(y ~ treated:post + xit + xi + xt + (1| state) + (1 | year), 
+                        data = mydata, REML = T)
+tidy(fit3) %>% flextable()
+
+p_load("geepack")
+res_model <- geeglm(y ~ treated*post + xi + xt + xit, 
+                    family=gaussian("identity"), 
+                    data=mydata %>% mutate(id=state_num), 
+                    id=id)
+tidy(res_model) %>% flextable() #SE are a bit larger
+```
